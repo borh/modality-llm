@@ -1,0 +1,3 @@
+{"mv":"can","utt":"I *can* swim.","res":{"palmer":[],"quirk":[]},"annotations":{"palmer":[],"quirk":[]}}
+{"mv":"must","utt":"You *must* go.","res":{"palmer":["epistemic"],"quirk":[]},"annotations":{"palmer":["epistemic"],"quirk":[]}}
+{"mv":"should","utt":"She *should* try.","res":{"palmer":[],"quirk":[]},"annotations":{"palmer":[],"quirk":[]}}

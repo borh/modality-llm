@@ -1,0 +1,4 @@
+import os
+
+DEFAULT_MODEL_NAME = os.getenv("DEFAULT_MODEL", "Qwen/Qwen3-0.6B")
+DEFAULT_QUANTIZATION_MODE = os.getenv("DEFAULT_QUANTIZATION", "bf16")
