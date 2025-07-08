@@ -53,7 +53,9 @@ def run(
         print("\n--- Generating Palmer classification & uncertainty visualizations ---")
         pal_cols = get_categories("palmer")
         try:
-            compare_with_human_annotators(palmer_results, pal_cols, "palmer", model_name)
+            compare_with_human_annotators(
+                palmer_results, pal_cols, "palmer", model_name
+            )
         except Exception as e:
             print(f"Warning: Skipping human comparison for Palmer: {e}")
         try:
@@ -124,6 +126,7 @@ def run(
 
         # 2) load or build all variants
         from modality_llm.utils import load_jsonl_models
+
         if args.augmentations_file:
             variants = load_jsonl_models(args.augmentations_file, Example)
         else:

@@ -111,7 +111,9 @@ class LLMCache:
                 md["taxonomy"] = params.get("taxonomy", "")
                 md["num_examples"] = len(entry.results)
                 try:
-                    cache_path.write_text(entry.model_dump_json(indent=2), encoding="utf-8")
+                    cache_path.write_text(
+                        entry.model_dump_json(indent=2), encoding="utf-8"
+                    )
                     print("Updated cache metadata")
                 except Exception as e:
                     print(f"Error updating cache metadata: {e}")

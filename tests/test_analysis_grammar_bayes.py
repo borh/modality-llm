@@ -1,6 +1,5 @@
 import arviz as az
 import pandas as pd
-import pytest
 
 from modality_llm.analysis_grammar_bayes import (
     bayesian_analysis,
@@ -8,10 +7,10 @@ from modality_llm.analysis_grammar_bayes import (
     bayesian_analysis_with_pymc,
 )
 from modality_llm.schema import (
-    UnifiedResult,
-    TaskResult,
-    LanguageResult,
     GrammarLabel,
+    LanguageResult,
+    TaskResult,
+    UnifiedResult,
 )
 
 

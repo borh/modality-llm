@@ -73,6 +73,7 @@ class ModalVerbsResultDict(TypedDict, total=False):
     Human‐annotation or consensus labels, keyed by taxonomy.
     We allow arbitrary strings here; downstream code will validate actual categories.
     """
+
     palmer: List[str]
     quirk: List[str]
 

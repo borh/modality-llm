@@ -183,10 +183,7 @@ def modal_prompts(
 
         cats = PALMER_CATEGORIES if taxonomy == "palmer" else QUIRK_CATEGORIES
         common_instruction = (
-            PAPER_INSTRUCTIONS
-            + "\n\nChoose from: "
-            + ", ".join(cats)
-            + "\n\n"
+            PAPER_INSTRUCTIONS + "\n\nChoose from: " + ", ".join(cats) + "\n\n"
         )
 
     for ex in examples:

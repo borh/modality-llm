@@ -1,10 +1,10 @@
 import csv
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, TypeVar
+from typing import Any, Dict, Iterable, Iterator, List, Literal, TypeVar
 
 from pydantic import BaseModel
-from typing import Literal
+
 from modality_llm.schema import ModalExample
 
 """
@@ -61,6 +61,7 @@ def chunked(xs: List[T], size: int) -> Iterator[List[T]]:
     for i in range(0, len(xs), size):
         yield xs[i : i + size]
 
+
 def unanimous_examples(
     examples: List[ModalExample],
     which: Literal["palmer", "quirk", "both"] | None,
@@ -71,7 +72,7 @@ def unanimous_examples(
     """
     if not which:
         return examples
-    taxes = ["palmer","quirk"] if which == "both" else [which]
+    taxes = ["palmer", "quirk"] if which == "both" else [which]
     out: List[ModalExample] = []
     for ex in examples:
         anns = ex.annotations or {}

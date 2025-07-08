@@ -1,13 +1,15 @@
 import pytest
+
 from modality_llm.analysis_compare import compare_with_human_annotators
 from modality_llm.schema import (
-    UnifiedResult,
-    TaskResult,
-    LanguageResult,
-    Taxonomy,
-    GrammarLabel,
     PALMER_CATEGORIES,
+    GrammarLabel,
+    LanguageResult,
+    TaskResult,
+    Taxonomy,
+    UnifiedResult,
 )
+
 
 def make_result(dist, expected, annots, example="ex", modal="mv"):
     # turn counts into a pseudo‐answers list
@@ -60,7 +62,7 @@ def test_compare_with_human_annotators_unknown_category(capsys):
     results = [
         make_result(
             {"deontic": 1, "epistemic": 0, "dynamic": 0, "unknown": 0},
-            "invalid",                      # not in PALMER_CATEGORIES
+            "invalid",  # not in PALMER_CATEGORIES
             ["deontic", "epistemic", "epistemic"],
         ),
     ]

@@ -25,7 +25,13 @@ def test_bayesian_analysis_modal_prints_and_runs(monkeypatch, capsys):
         raising=True,
     )
     # build a real UnifiedResult
-    from modality_llm.schema import UnifiedResult, TaskResult, LanguageResult, Taxonomy, GrammarLabel
+    from modality_llm.schema import (
+        GrammarLabel,
+        LanguageResult,
+        TaskResult,
+        Taxonomy,
+        UnifiedResult,
+    )
 
     answers = ["epistemic"] * 2 + ["deontic"]
     lr = LanguageResult(prompt="", answers=answers)
