@@ -35,11 +35,9 @@ def compute_grammar_results(
     }
     hit = cache.get(model_name, "grammar_sampling", params, model_cls=UnifiedResult)
     if hit:
-        # now a List[UnifiedResult]
         return hit
 
     generator = make_generator(model, r"yes|no", num_samples)
-    # we now require a real Example everywhere
     norm_exs = examples
 
     # 1) build yes/no prompts for each Example

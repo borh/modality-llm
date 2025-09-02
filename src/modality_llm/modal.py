@@ -170,6 +170,11 @@ def compute_modal_results(
     from modality_llm.llm_utils import make_generator
 
     generator = make_generator(model, pattern, num_samples)
+    
+    # Log device info before starting generation
+    print(f"\nStarting generation for {len(examples_to_process)} examples...")
+    from modality_llm.model_manager import log_model_device_info
+    log_model_device_info(model)
     all_results = []
 
     n_batches = (len(examples_to_process) + batch_size - 1) // batch_size
@@ -201,7 +206,8 @@ def compute_modal_results(
                 classification={taxonomy_enum: class_task},
             )
             all_results.append(result)
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     cache.save(
         model_name,

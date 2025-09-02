@@ -97,6 +97,13 @@ def generate_acceptability_variants(
         "gerund_form": gerund_form,
     }
 
+    # Update grammaticality assignment based on strategy
+    grammaticality_map = {
+        "insert_to": GrammarLabel.no,  # Always ungrammatical
+        "double_modal": GrammarLabel.no,  # Always ungrammatical
+        "gerund_form": GrammarLabel.partial,  # Context-dependent
+    }
+
     for strat in choices:
         if len(out) >= max_variants:
             break
@@ -111,7 +118,7 @@ def generate_acceptability_variants(
                     eid=sid,
                     english=new_utt,
                     japanese=None,
-                    grammatical=GrammarLabel.no,
+                    grammatical=grammaticality_map.get(strat, GrammarLabel.partial),
                     english_target=modal,
                     japanese_target=None,
                     human_annotations=entry.human_annotations,
@@ -129,7 +136,8 @@ try:
     import spacy
 
     _nlp = None
-    print(f"Using spaCy {spacy.__version__}")
+    gpu_use = spacy.prefer_gpu()
+    print(f"Using spaCy {spacy.__version__} (gpu: {gpu_use})")
 
     def get_spacy_model():
         global _nlp
@@ -222,6 +230,78 @@ _MODAL_TRANSFORMATIONS: dict[
             },
         },
     },
+    "may": {
+        "substitution": {
+            "permission_paraphrase": {"pattern": r"\bmay\b", "replacement": "can"},
+        },
+        "entailment": {
+            "permission_to_possibility": {
+                "pattern": r"\bmay\b",
+                "replacement": "might",
+            },
+        },
+        "contradiction": {
+            "permission_to_prohibition": {
+                "pattern": r"\bmay\b",
+                "replacement": "may not",
+            },
+        },
+    },
+    "might": {
+        "substitution": {
+            "possibility_paraphrase": {"pattern": r"\bmight\b", "replacement": "may"},
+        },
+        "entailment": {},
+        "contradiction": {
+            "possibility_to_impossibility": {
+                "pattern": r"\bmight\b",
+                "replacement": "cannot",
+            },
+        },
+    },
+    "will": {
+        "substitution": {
+            "prediction_paraphrase": {"pattern": r"\bwill\b", "replacement": "shall"},
+        },
+        "entailment": {
+            "prediction_to_possibility": {
+                "pattern": r"\bwill\b",
+                "replacement": "might",
+            },
+        },
+        "contradiction": {
+            "prediction_to_impossibility": {
+                "pattern": r"\bwill\b",
+                "replacement": "will not",
+            },
+        },
+    },
+    "would": {
+        "substitution": {
+            "conditional_paraphrase": {"pattern": r"\bwould\b", "replacement": "could"},
+        },
+        "entailment": {
+            "conditional_to_possibility": {
+                "pattern": r"\bwould\b",
+                "replacement": "might",
+            },
+        },
+        "contradiction": {
+            "conditional_to_impossibility": {
+                "pattern": r"\bwould\b",
+                "replacement": "would not",
+            },
+        },
+    },
+    "could": {
+        "substitution": {
+            "ability_paraphrase": {"pattern": r"\bcould\b", "replacement": "might"},
+        },
+        "entailment": {},
+        "contradiction": {
+            "ability_to_denial": {"pattern": r"\bcould\b", "replacement": "could not"},
+        },
+    },
     "must": {
         "substitution": {
             "necessity_paraphrase": {
@@ -251,6 +331,34 @@ _MODAL_TRANSFORMATIONS: dict[
             },
         },
     },
+    "shall": {
+        "substitution": {
+            "obligation_paraphrase": {"pattern": r"\bshall\b", "replacement": "will"},
+        },
+        "entailment": {
+            "obligation_to_advice": {"pattern": r"\bshall\b", "replacement": "should"},
+        },
+        "contradiction": {
+            "obligation_to_denial": {
+                "pattern": r"\bshall\b",
+                "replacement": "shall not",
+            },
+        },
+    },
+    "ought to": {
+        "substitution": {
+            "advice_paraphrase": {"pattern": r"\bought to\b", "replacement": "should"},
+        },
+        "entailment": {
+            "advice_to_possibility": {"pattern": r"\bought to\b", "replacement": "can"},
+        },
+        "contradiction": {
+            "advice_to_negation": {
+                "pattern": r"\bought to\b",
+                "replacement": "ought not to",
+            },
+        },
+    },
 }
 
 
@@ -265,8 +373,10 @@ def generate_variants_by_category(
     """
     Look up all transforms under `_MODAL_TRANSFORMATIONS[modal][category]`,
     apply at most `max_variants`, and build TypedDicts via `build_entry_fn`.
+    Adds debug logging for modal, category, and transformation attempts.
     """
     bucket = _MODAL_TRANSFORMATIONS.get(modal, {}).get(category, {})
+    print(f"DEBUG: Modal '{modal}', category '{category}' has {len(bucket)} strategies: {list(bucket.keys())}")
     out: list[R] = []
     # always use the marked‐English form for augmentation
     utt = entry.english or ""
@@ -282,6 +392,8 @@ def generate_variants_by_category(
         new_utt = re.sub(pattern, replacement, utt, count=1, flags=re.IGNORECASE)
         if new_utt != utt:
             out.append(build_entry_fn(entry, new_utt, strat, category))
+        else:
+            print(f"DEBUG: No transformation for '{modal}' with '{strat}' in: '{utt}'")
     return out
 
 

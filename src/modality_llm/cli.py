@@ -108,20 +108,45 @@ def parse_args() -> argparse.Namespace:
     sub = parser.add_subparsers(dest="mode", required=True, help="Which task to run")
 
     # generate task
-    gen = sub.add_parser("generate", help="Download modal dataset & make grammar CSV")
-    gen.add_argument("data_path", help="Path or target for modal_verbs.jsonl")
-    gen.add_argument("output_csv", help="Where to write the CSV")
+    gen = sub.add_parser(
+        "generate",
+        help="Generate CSV for annotation or convert annotated CSV back to JSONL",
+    )
     gen.add_argument(
         "--gen-include-alternatives",
         action="store_true",
         default=False,
-        help="Also emit alternative substitution rows",
+        help="Also emit alternative substitution rows (csv mode only)",
     )
     gen.add_argument(
         "--require-consensus",
         choices=["palmer", "quirk", "both"],
         default=None,
-        help="If set, only include unanimously‐labeled examples",
+        help="If set, only include unanimously‐labeled examples (csv mode only)",
+    )
+    gen.add_argument(
+        "submode",
+        choices=["csv", "jsonl"],
+        help="Generate CSV for annotation or convert annotated CSV back to JSONL",
+    )
+    gen.add_argument(
+        "--completed-only",
+        action="store_true",
+        default=False,
+        help="Only convert completed examples (jsonl mode only)",
+    )
+    gen.add_argument(
+        "data_path",
+        help="Input: modal_verbs.jsonl (csv mode) or annotated CSV file (jsonl mode)",
+    )
+    gen.add_argument(
+        "--format",
+        choices=["csv", "xlsx"],
+        default="csv",
+        help="Output format: CSV or XLSX with validation (csv mode only)",
+    )
+    gen.add_argument(
+        "output", help="Output: CSV file (csv mode) or JSONL file (jsonl mode)"
     )
 
     # modal‐classification task
@@ -186,6 +211,13 @@ def parse_args() -> argparse.Namespace:
         action="store_false",
         default=True,
         help="Disable automatic augmentation analysis",
+    )
+    modal.add_argument(
+        "--no-flash-attn",
+        action="store_false",
+        dest="use_flash_attn",
+        default=True,
+        help="Disable flash attention",
     )
 
     # grammar‐checking task
@@ -274,6 +306,13 @@ def parse_args() -> argparse.Namespace:
         choices=["palmer", "quirk", "both"],
         default=None,
         help="Only use examples where all three annotators agreed",
+    )
+    grammar.add_argument(
+        "--no-flash-attn",
+        action="store_false",
+        dest="use_flash_attn",
+        default=True,
+        help="Disable flash attention",
     )
 
     run_parser = sub.add_parser(
@@ -389,6 +428,13 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="MCMC core count",
+    )
+    run_parser.add_argument(
+        "--no-flash-attn",
+        action="store_false",
+        dest="use_flash_attn",
+        default=True,
+        help="Disable flash attention",
     )
 
     return parser.parse_args()

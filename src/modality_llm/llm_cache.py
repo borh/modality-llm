@@ -176,12 +176,11 @@ class LLMCache:
         serialized: list[dict[str, Any]] = []
         for r in results:
             if isinstance(r, BaseModel):
-                # do not persist computed fields like `distribution` / `percentages`
+                # Remove the exclude_computed parameter - computed fields are excluded by default in Pydantic v2
                 serialized.append(
                     r.model_dump(
                         by_alias=True,
                         exclude_none=True,
-                        exclude_computed=True,
                     )
                 )
             else:

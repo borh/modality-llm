@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import torch
 import transformers
-from outlines import models
+from outlines import from_transformers
 from transformers import AutoTokenizer
 
 from modality_llm.settings import DEFAULT_QUANTIZATION_MODE
@@ -23,12 +23,11 @@ def build_quant_config(mode: str) -> Tuple[Optional[Any], torch.dtype]:
 
             print(f"Using BitsAndBytesConfig for {mode}")
             if mode == "int8":
-                # only 8-bit
+                # 8-bit quantization
                 bnb = BitsAndBytesConfig(load_in_8bit=True)
             else:
-                # 4-bit needs the extra kwargs
+                # 4-bit quantization with recommended settings
                 bnb = BitsAndBytesConfig(
-                    load_in_8bit=False,
                     load_in_4bit=True,
                     bnb_4bit_quant_type="nf4",
                     bnb_4bit_use_double_quant=True,
@@ -36,10 +35,60 @@ def build_quant_config(mode: str) -> Tuple[Optional[Any], torch.dtype]:
                 )
             return bnb, torch.bfloat16
         except ImportError as e:
-            print("bnb unavailable, falling back to bf16:", e)
+            print("bitsandbytes unavailable, falling back to bf16:", e)
             return None, torch.bfloat16
     else:
         return None, torch.bfloat16
+
+
+def log_model_device_info(model: Any) -> None:
+    """Log device placement information for a model."""
+    if hasattr(model, 'model'):  # For wrapped models like Outlines
+        base_model = model.model
+    else:
+        base_model = model
+
+    print("\n=== Model Device Information ===")
+
+    # Check device map
+    if hasattr(base_model, 'hf_device_map'):
+        device_map = base_model.hf_device_map
+        devices = set(device_map.values())
+
+        print(f"Distributed across devices: {devices}")
+
+        # Count modules per device
+        device_counts = {}
+        for device in device_map.values():
+            device_counts[device] = device_counts.get(device, 0) + 1
+
+        for device, count in device_counts.items():
+            print(f"  {device}: {count} modules")
+
+    # Check single device
+    elif hasattr(base_model, 'device'):
+        print(f"Model on single device: {base_model.device}")
+
+    # Check first parameter's device as fallback
+    else:
+        try:
+            first_param = next(base_model.parameters())
+            print(f"Model parameters on: {first_param.device}")
+        except StopIteration:
+            print("Could not determine model device")
+
+    # GPU memory status
+    if torch.cuda.is_available():
+        print("\nGPU Memory Status:")
+        for i in range(torch.cuda.device_count()):
+            props = torch.cuda.get_device_properties(i)
+            allocated = torch.cuda.memory_allocated(i) / 1024**3
+            reserved = torch.cuda.memory_reserved(i) / 1024**3
+            total = props.total_memory / 1024**3
+
+            print(f"  GPU {i} ({props.name}):")
+            print(f"    Allocated: {allocated:.2f}GB / {total:.2f}GB ({allocated/total*100:.1f}%)")
+            print(f"    Reserved:  {reserved:.2f}GB / {total:.2f}GB ({reserved/total*100:.1f}%)")
 
 
 def initialize_model(model_name: str) -> Any:
@@ -57,27 +106,23 @@ def initialize_model(model_name: str) -> Any:
         return model
 
     print(f"Initializing model: {model_name} (quant={quantization_mode})")
-    config = transformers.AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-    config.init_device = "meta"
 
+    # Build model kwargs
     model_kwargs: Dict[str, Any] = {
-        "config": config,
         "trust_remote_code": True,
-        "device_map": {"": 0},
+        "device_map": "auto",  # Use "auto" for automatic device mapping
     }
 
+    # Build quantization config
     quant_config, dtype = build_quant_config(quantization_mode)
     if quant_config:
-        model_kwargs.update(
-            {
-                "quantization_config": quant_config,
-                "torch_dtype": dtype,
-            }
-        )
+        model_kwargs["quantization_config"] = quant_config
+        # Let transformers handle dtype automatically when using quantization
+        model_kwargs["torch_dtype"] = "auto"
     else:
         model_kwargs["torch_dtype"] = dtype
 
-    # optional flash attention
+    # Optional flash attention
     if use_flash_attn:
         if importlib.util.find_spec("flash_attn"):
             model_kwargs["attn_implementation"] = "flash_attention_2"
@@ -87,30 +132,20 @@ def initialize_model(model_name: str) -> Any:
     else:
         print("Flash attention disabled by user; using PyTorch defaults")
 
-    model = models.transformers(
-        model_name=model_name,
-        device="cuda",
-        model_kwargs=model_kwargs,
+    # Create tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # Create the model directly with from_pretrained
+    transformers_model = transformers.AutoModelForCausalLM.from_pretrained(
+        model_name, **model_kwargs
     )
 
-    # Initialize tokenizer (suppress failures so tests won’t crash)
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-    except Exception as e:
-        print(f"Warning: Failed to load tokenizer for {model_name}: {e}")
-        tokenizer = None
+    # Wrap with outlines
+    model = from_transformers(transformers_model, tokenizer)
+
+    # Log device placement information
+    log_model_device_info(model)
+
     return model
-
-
-def get_tokenizer(model_name: str) -> Any:
-    """
-    Get the tokenizer for the given model name.
-    """
-    global tokenizer
-    if tokenizer is None:
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
-        except Exception as e:
-            print(f"Warning: Failed to load tokenizer for {model_name}: {e}")
-            tokenizer = None
-    return tokenizer

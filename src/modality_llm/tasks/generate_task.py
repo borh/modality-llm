@@ -9,12 +9,18 @@ def download_modal_verb_dataset(path: str) -> str:
 
 
 def generate_grammar_examples_for_annotation(
-    modal_data_path: str, output_csv_path: str, include_alternatives: bool
+    modal_data_path: str,
+    output_csv_path: str,
+    include_alternatives: bool,
+    require_consensus: str | None = None,
+    output_format: str = "csv",
 ) -> list[Any]:
     return examples_mod.generate_grammar_examples_for_annotation(
         modal_data_path=modal_data_path,
         output_csv_path=output_csv_path,
         include_alternatives=include_alternatives,
+        require_consensus=require_consensus,
+        output_format=output_format,
     )
 
 
@@ -25,15 +31,28 @@ def run(
     *,
     download_fn=download_modal_verb_dataset,
     generate_fn=generate_grammar_examples_for_annotation,
+    convert_fn=None,
 ) -> None:
-    print("Starting task: Generate Grammar CSV for Annotation")
-    modal_data_path = download_fn(args.data_path)
-    if modal_data_path:
-        generate_fn(
-            modal_data_path=modal_data_path,
-            output_csv_path=args.output_csv,
-            include_alternatives=args.gen_include_alternatives,
-            require_consensus=getattr(args, "require_consensus", None),
+    if args.submode == "csv":
+        print("Starting task: Generate Grammar CSV for Annotation")
+        modal_data_path = download_fn(args.data_path)
+        if modal_data_path:
+            generate_fn(
+                modal_data_path=modal_data_path,
+                output_csv_path=args.output,
+                include_alternatives=getattr(args, "gen_include_alternatives", False),
+                require_consensus=getattr(args, "require_consensus", None),
+                output_format=getattr(args, "format", "csv"),
+            )
+        else:
+            print("Warning: Could not load modal dataset. Cannot generate CSV.")
+
+    elif args.submode == "jsonl":
+        print("Starting task: Convert Annotated CSV to JSONL")
+        if convert_fn is None:
+            convert_fn = examples_mod.convert_annotated_csv_to_jsonl
+        convert_fn(
+            csv_path=args.data_path,
+            output_jsonl_path=args.output,
+            completed_only=getattr(args, "completed_only", False),
         )
-    else:
-        print("Warning: Could not load modal dataset. Cannot generate CSV.")

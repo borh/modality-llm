@@ -22,6 +22,7 @@ class _Model(BaseModel):
 class GrammarLabel(str, Enum):
     yes = "yes"
     no = "no"
+    partial = "partial"  # Add this new option
 
 
 class Taxonomy(str, Enum):

@@ -23,10 +23,12 @@ dependencies = [
     "spacy>=3.8.7",
     "statsmodels>=0.14.4",
     "transformers>=4.49.0",
+    "xlsxwriter>=3.2.5",
 ]
 
 [project.optional-dependencies]
 cuda = [
+    "cupy-cuda12x",
     "flash-attn",
 ]
 
@@ -34,7 +36,7 @@ cuda = [
 no-build-isolation-package = ["flash-attn"]
 
 [tool.uv.sources]
-flash-attn = { url = "https://github.com/Zarrac/my-pytorch-builds/releases/download/flash-attn-2.7.4.post1-cuda12.8/flash_attn-2.7.4.post1+pt270cu128cxx11abiTRUE-cp312-cp312-linux_x86_64.whl" }
+# flash-attn = { url = "https://github.com/Zarrac/my-pytorch-builds/releases/download/flash-attn-2.7.4.post1-cuda12.8/flash_attn-2.7.4.post1+pt270cu128cxx11abiTRUE-cp312-cp312-linux_x86_64.whl" }
 en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
 
 [project.scripts]
