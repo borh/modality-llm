@@ -173,15 +173,17 @@ def modal_prompts(
         A tuple (prompt_strings, expected_answers).
     """
 
+    # Accept either a Taxonomy enum or a plain string; normalize to string
+    tax_str = taxonomy.value if isinstance(taxonomy, Taxonomy) else taxonomy
+
     prompts: List[str] = []
     expected_answers: List[List[str]] = []
     if zero_shot:
-        common_instruction = get_common_instruction(taxonomy)
+        common_instruction = get_common_instruction(tax_str)
     else:
-        # long paper instructions + explicit category list
         from modality_llm.schema import PALMER_CATEGORIES, QUIRK_CATEGORIES
 
-        cats = PALMER_CATEGORIES if taxonomy == "palmer" else QUIRK_CATEGORIES
+        cats = PALMER_CATEGORIES if tax_str == "palmer" else QUIRK_CATEGORIES
         common_instruction = (
             PAPER_INSTRUCTIONS + "\n\nChoose from: " + ", ".join(cats) + "\n\n"
         )
@@ -189,7 +191,19 @@ def modal_prompts(
     for ex in examples:
         utterance = ex.english
         modal_verb = ex.english_target
-        expected = ex.expected_categories[taxonomy]
+        # expected_answers might be keyed by string ("palmer") or Taxonomy enum
+        expected = []
+        if ex.expected_categories:
+            # try string key first
+            if tax_str in ex.expected_categories:
+                expected = ex.expected_categories.get(tax_str, [])
+            else:
+                try:
+                    expected = ex.expected_categories.get(Taxonomy(tax_str), [])
+                except Exception:
+                    expected = []
+        # ensure we always append a list
+        expected = expected or []
 
         prompt = (
             f"{common_instruction}"

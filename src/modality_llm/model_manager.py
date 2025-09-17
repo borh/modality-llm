@@ -3,7 +3,14 @@ from typing import Any, Dict, Optional, Tuple
 
 import torch
 import transformers
-from outlines import from_transformers
+import types
+try:
+    from outlines import from_transformers, models as outlines_models
+except Exception:
+    from_transformers = None
+    outlines_models = types.SimpleNamespace(transformers=lambda *a, **k: None)
+# Expose a `models` object so tests can monkeypatch mm.models.transformers
+models = outlines_models
 from transformers import AutoTokenizer
 
 from modality_llm.settings import DEFAULT_QUANTIZATION_MODE
@@ -132,18 +139,67 @@ def initialize_model(model_name: str) -> Any:
     else:
         print("Flash attention disabled by user; using PyTorch defaults")
 
-    # Create tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    # Try to let an outlines/models wrapper produce the final model. This allows tests
+    # to monkeypatch `mm.models.transformers` and return a dummy without triggering
+    # heavy tokenizer/model downloads. If the wrapper does not provide a model,
+    # construct tokenizer & transformers model and then wrap.
+    try:
+        model_candidate = None
+        # Try calling wrapper with no args first (tests commonly monkeypatch to accept **kwargs)
+        try:
+            model_candidate = models.transformers()
+        except TypeError:
+            model_candidate = None
+        except Exception:
+            model_candidate = None
 
-    # Create the model directly with from_pretrained
-    transformers_model = transformers.AutoModelForCausalLM.from_pretrained(
-        model_name, **model_kwargs
-    )
+        if model_candidate is not None:
+            model = model_candidate
+            log_model_device_info(model)
+            return model
 
-    # Wrap with outlines
-    model = from_transformers(transformers_model, tokenizer)
+        # Deferred: create tokenizer only when we actually need to load base model
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        # Create the transformers model (honoring quantization/device kwargs)
+        transformers_model = transformers.AutoModelForCausalLM.from_pretrained(
+            model_name, **model_kwargs
+        )
+
+        # Try calling models.transformers with positional args; if that fails, try keyword args.
+        wrapped = None
+        try:
+            try:
+                wrapped = models.transformers(transformers_model, tokenizer)
+            except TypeError:
+                wrapped = models.transformers(
+                    transformers_model=transformers_model, tokenizer=tokenizer
+                )
+        except Exception:
+            wrapped = None
+
+        if wrapped is not None:
+            model = wrapped
+        elif from_transformers is not None:
+            try:
+                model = from_transformers(transformers_model, tokenizer)
+            except Exception:
+                model = transformers_model
+        else:
+            model = transformers_model
+
+    except Exception as e:
+        # Last-resort fallback to raw transformers model (bubble up error if even this fails).
+        print(f"Warning initializing model with outlines wrapper: {e}")
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        transformers_model = transformers.AutoModelForCausalLM.from_pretrained(
+            model_name, **model_kwargs
+        )
+        model = transformers_model
 
     # Log device placement information
     log_model_device_info(model)

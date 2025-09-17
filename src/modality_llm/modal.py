@@ -50,9 +50,11 @@ def get_categories(taxonomy: Taxonomy) -> List[PalmerCategory] | List[QuirkCateg
         ...
         ValueError: Unknown taxonomy: invalid
     """
-    if taxonomy == "palmer":
+    # Accept either a Taxonomy enum or a plain string; normalize to string
+    tax = taxonomy.value if isinstance(taxonomy, Taxonomy) else taxonomy
+    if tax == "palmer":
         return PALMER_CATEGORIES
-    elif taxonomy == "quirk":
+    elif tax == "quirk":
         return QUIRK_CATEGORIES
     else:
         raise ValueError(f"Unknown taxonomy: {taxonomy}")
