@@ -414,20 +414,32 @@ class TestModalTransformations:
 
     def test_transformation_strategies_valid(self):
         valid = {
-            # substitution
+            # substitution / paraphrases
             "ability_paraphrase",
-            "necessity_paraphrase",
             "advice_paraphrase",
-            # entailment
+            "necessity_paraphrase",
+            "obligation_paraphrase",
+            "permission_paraphrase",
+            "possibility_paraphrase",
+            "prediction_paraphrase",
+            "conditional_paraphrase",
+            # entailment / weakening/strengthening
             "necessity_to_advice",
             "necessity_to_permission",
             "advice_to_possibility",
-            # contradiction
+            "permission_to_possibility",
+            "prediction_to_possibility",
+            "conditional_to_possibility",
+            # contradiction / denial/prohibition/etc.
             "ability_to_denial",
             "necessity_to_denial",
             "permission_to_prohibition",
             "advice_to_negation",
             "possibility_to_impossibility",
+            "prediction_to_impossibility",
+            "conditional_to_impossibility",
+            "obligation_to_advice",
+            "obligation_to_denial",
         }
         for modal, transforms in _MODAL_TRANSFORMATIONS.items():
             for category, bucket in transforms.items():

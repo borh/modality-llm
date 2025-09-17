@@ -172,10 +172,11 @@ def compute_modal_results(
     from modality_llm.llm_utils import make_generator
 
     generator = make_generator(model, pattern, num_samples)
-    
+
     # Log device info before starting generation
     print(f"\nStarting generation for {len(examples_to_process)} examples...")
     from modality_llm.model_manager import log_model_device_info
+
     log_model_device_info(model)
     all_results = []
 

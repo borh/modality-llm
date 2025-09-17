@@ -1,19 +1,21 @@
 import importlib
+import types
 from typing import Any, Dict, Optional, Tuple
 
 import torch
 import transformers
-import types
+from transformers import AutoTokenizer
+
+from modality_llm.settings import DEFAULT_QUANTIZATION_MODE
+
 try:
-    from outlines import from_transformers, models as outlines_models
+    from outlines import from_transformers
+    from outlines import models as outlines_models
 except Exception:
     from_transformers = None
     outlines_models = types.SimpleNamespace(transformers=lambda *a, **k: None)
 # Expose a `models` object so tests can monkeypatch mm.models.transformers
 models = outlines_models
-from transformers import AutoTokenizer
-
-from modality_llm.settings import DEFAULT_QUANTIZATION_MODE
 
 # module-level cache
 model: Optional[Any] = None
@@ -50,7 +52,7 @@ def build_quant_config(mode: str) -> Tuple[Optional[Any], torch.dtype]:
 
 def log_model_device_info(model: Any) -> None:
     """Log device placement information for a model."""
-    if hasattr(model, 'model'):  # For wrapped models like Outlines
+    if hasattr(model, "model"):  # For wrapped models like Outlines
         base_model = model.model
     else:
         base_model = model
@@ -58,7 +60,7 @@ def log_model_device_info(model: Any) -> None:
     print("\n=== Model Device Information ===")
 
     # Check device map
-    if hasattr(base_model, 'hf_device_map'):
+    if hasattr(base_model, "hf_device_map"):
         device_map = base_model.hf_device_map
         devices = set(device_map.values())
 
@@ -73,15 +75,30 @@ def log_model_device_info(model: Any) -> None:
             print(f"  {device}: {count} modules")
 
     # Check single device
-    elif hasattr(base_model, 'device'):
+    elif hasattr(base_model, "device"):
         print(f"Model on single device: {base_model.device}")
 
-    # Check first parameter's device as fallback
+    # Check first parameter's device as fallback; be robust for non-model objects.
     else:
         try:
-            first_param = next(base_model.parameters())
-            print(f"Model parameters on: {first_param.device}")
-        except StopIteration:
+            if hasattr(base_model, "parameters"):
+                try:
+                    first_param = next(base_model.parameters())
+                except StopIteration:
+                    first_param = None
+                if first_param is not None:
+                    try:
+                        print(f"Model parameters on: {first_param.device}")
+                    except Exception:
+                        print("Could not determine model device")
+                else:
+                    print("Could not determine model device")
+            else:
+                print("Could not determine model device")
+        except Exception:
+            # Catch any unexpected attribute errors or other exceptions when
+            # dealing with test-doubles or wrapped objects so initialize_model
+            # can continue to return the provided model without crashing.
             print("Could not determine model device")
 
     # GPU memory status
@@ -94,8 +111,12 @@ def log_model_device_info(model: Any) -> None:
             total = props.total_memory / 1024**3
 
             print(f"  GPU {i} ({props.name}):")
-            print(f"    Allocated: {allocated:.2f}GB / {total:.2f}GB ({allocated/total*100:.1f}%)")
-            print(f"    Reserved:  {reserved:.2f}GB / {total:.2f}GB ({reserved/total*100:.1f}%)")
+            print(
+                f"    Allocated: {allocated:.2f}GB / {total:.2f}GB ({allocated / total * 100:.1f}%)"
+            )
+            print(
+                f"    Reserved:  {reserved:.2f}GB / {total:.2f}GB ({reserved / total * 100:.1f}%)"
+            )
 
 
 def initialize_model(model_name: str) -> Any:

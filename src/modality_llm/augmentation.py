@@ -99,9 +99,9 @@ def generate_acceptability_variants(
 
     # Update grammaticality assignment based on strategy
     grammaticality_map = {
-        "insert_to": GrammarLabel.no,  # Always ungrammatical
-        "double_modal": GrammarLabel.no,  # Always ungrammatical
-        "gerund_form": GrammarLabel.partial,  # Context-dependent
+        "insert_to": GrammarLabel.no,
+        "double_modal": GrammarLabel.no,
+        "gerund_form": GrammarLabel.no,
     }
 
     for strat in choices:
@@ -376,7 +376,9 @@ def generate_variants_by_category(
     Adds debug logging for modal, category, and transformation attempts.
     """
     bucket = _MODAL_TRANSFORMATIONS.get(modal, {}).get(category, {})
-    print(f"DEBUG: Modal '{modal}', category '{category}' has {len(bucket)} strategies: {list(bucket.keys())}")
+    print(
+        f"DEBUG: Modal '{modal}', category '{category}' has {len(bucket)} strategies: {list(bucket.keys())}"
+    )
     out: list[R] = []
     # always use the marked‐English form for augmentation
     utt = entry.english or ""
