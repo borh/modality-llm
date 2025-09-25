@@ -319,7 +319,7 @@ def remove_modality_transform_api(
     model_name: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
-    timeout: float = 30.0,
+    timeout: float = 300.0,
 ) -> str:
     """
     API-backed modality removal using an OpenAI-compatible client.
@@ -337,14 +337,34 @@ def remove_modality_transform_api(
     model = model_name or os.getenv("OPENAI_MODEL") or "openai/gpt-oss-20b"
     try:
         client = OpenAI(api_key=key, base_url=base)
+        utt_clean = utt.replace("*", "")
         resp = client.responses.create(
             model=model,
             instructions=prompt,
             # reasoning_effort="low",
-            input=utt,
+            input=utt_clean,
+            temperature=0.0,
         )
         text = (getattr(resp, "output_text", "") or "").strip()
         text = text.strip('"').strip("'").replace("*", "")
+        # Retry once with higher temperature and a different seed if empty or unchanged (modal still present)
+        if (not text) or re.search(
+            rf"\b{re.escape(modal)}\b", text, flags=re.IGNORECASE
+        ):
+            resp2 = client.responses.create(
+                model=model,
+                instructions=prompt,
+                # reasoning_effort="low",
+                input=utt_clean,
+                temperature=0.1,
+            )
+            text2 = (getattr(resp2, "output_text", "") or "").strip()
+            text2 = text2.strip('"').strip("'").replace("*", "")
+            if (not text2) or re.search(
+                rf"\b{re.escape(modal)}\b", text2, flags=re.IGNORECASE
+            ):
+                return remove_modality_transform(utt, modal, subj_form)
+            return _clean(text2, utt)
         return _clean(text, utt)
     except Exception as e:
         # Fallback to local spaCy rewrite
@@ -359,11 +379,13 @@ async def remove_modality_transform_api_async(
     model_name: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
-    timeout: float = 30.0,
+    timeout: float = 300.0,
 ) -> str:
     """
     Async API-backed modality removal using an OpenAI-compatible client.
     Falls back to the synchronous spaCy-based `remove_modality_transform` on error.
+
+    Note: responses API does not support many common API params like seed etc
     """
     prompt = _build_api_removal_prompt(utt, modal)
     base = (
@@ -378,14 +400,33 @@ async def remove_modality_transform_api_async(
         from openai import AsyncOpenAI
 
         client = AsyncOpenAI(api_key=key, base_url=base)
+        utt_clean = utt.replace("*", "")
         resp = await client.responses.create(
             model=model,
             instructions=prompt,
             # reasoning_effort="low",
-            input=utt,
+            input=utt_clean,
+            temperature=0.0,
         )
         text = (getattr(resp, "output_text", "") or "").strip()
         text = text.strip('"').strip("'").replace("*", "")
+        if (not text) or re.search(
+            rf"\b{re.escape(modal)}\b", text, flags=re.IGNORECASE
+        ):
+            resp2 = await client.responses.create(
+                model=model,
+                instructions=prompt,
+                # reasoning_effort="low",
+                input=utt_clean,
+                temperature=0.1,
+            )
+            text2 = (getattr(resp2, "output_text", "") or "").strip()
+            text2 = text2.strip('"').strip("'").replace("*", "")
+            if (not text2) or re.search(
+                rf"\b{re.escape(modal)}\b", text2, flags=re.IGNORECASE
+            ):
+                return remove_modality_transform(utt, modal, subj_form)
+            return _clean(text2, utt)
         return _clean(text, utt)
     except Exception as e:
         logging.error(e)

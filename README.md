@@ -177,6 +177,24 @@ uv run --extra cuda modality-llm generate csv modal_verbs.jsonl out.csv --gen-in
 
 The prompt used for the API distills the spaCy rules and test cases and is in general better than the spaCy backend.
 
+## API-backed grammaticality judging for augmented expressions
+
+You can populate the Grammaticality_Expected column using an API model with structured outputs (code is tested with SGLang and openai/gpt-oss-20b).
+
+Environment:
+- OPENAI_API_BASE: base URL (e.g., http://localhost:30000/v1)
+- OPENAI_API_KEY: key (defaults to "EMPTY" if not set)
+
+During CSV generation:
+uv run --extra cuda modality-llm generate csv modal_verbs.jsonl out.csv --gen-include-alternatives --format csv --judge-grammaticality --judge-model openai/gpt-oss-20b --judge-concurrency 8
+
+As a separate step on an existing CSV:
+uv run modality_llm generate judge existing.csv judged.csv --judge-model openai/gpt-oss-20b --judge-concurrency 8
+
+Notes:
+- Structured outputs are validated against a Pydantic schema (grammatical ∈ {'yes','no','partial'}, optional explanation).
+- By default, only augmented rows are judged and Completed=1 rows are preserved. Use --judge-overwrite to override and --no-judge-only-augmented to include originals.
+
 ## Behaviour and caveats
 
 - Quantization: bitsandbytes support is optional. If bitsandbytes is missing, the code falls back to bf16.

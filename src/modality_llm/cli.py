@@ -145,9 +145,87 @@ def parse_args() -> argparse.Namespace:
         help="If set, only include unanimously‐labeled examples (csv mode only)",
     )
     gen.add_argument(
+        "--judge-grammaticality",
+        action="store_true",
+        default=False,
+        help="Use API to populate Grammaticality_Expected (run during CSV generation)",
+    )
+    gen.add_argument(
+        "--judge-model",
+        type=str,
+        default="openai/gpt-oss-20b",
+        help="Model name for grammaticality API",
+    )
+    gen.add_argument(
+        "--judge-concurrency",
+        type=int,
+        default=64,
+        help="Max concurrent API requests for grammaticality judging",
+    )
+    gen.add_argument(
+        "--judge-overwrite",
+        action="store_true",
+        default=False,
+        help="Overwrite existing Grammaticality_Expected values",
+    )
+    gen.add_argument(
+        "--judge-only-augmented",
+        action="store_true",
+        default=True,
+        help="Judge only augmented rows (skip originals)",
+    )
+
+    # Repair submode flags
+    gen.add_argument(
+        "--repair-model",
+        type=str,
+        default="openai/gpt-oss-20b",
+        help="Model name for grammaticality repair API",
+    )
+    gen.add_argument(
+        "--repair-concurrency",
+        type=int,
+        default=8,
+        help="Max concurrent API requests for grammaticality repair",
+    )
+    gen.add_argument(
+        "--repair-only-augmented",
+        dest="repair_only_augmented",
+        action="store_true",
+        default=True,
+        help="Repair only augmented rows (skip originals)",
+    )
+    gen.add_argument(
+        "--no-repair-only-augmented",
+        dest="repair_only_augmented",
+        action="store_false",
+        help="Include originals in repair",
+    )
+    gen.add_argument(
+        "--repair-only-bad",
+        dest="repair_only_bad",
+        action="store_true",
+        default=True,
+        help="Repair only rows with Grammaticality_Expected in {no, partial}",
+    )
+    gen.add_argument(
+        "--no-repair-only-bad",
+        dest="repair_only_bad",
+        action="store_false",
+        help="Repair all eligible rows regardless of judgment",
+    )
+    gen.add_argument(
+        "--no-rejudge",
+        dest="no_rejudge",
+        action="store_true",
+        default=False,
+        help="Do not re-run grammaticality judgment after repair",
+    )
+
+    gen.add_argument(
         "submode",
-        choices=["csv", "jsonl"],
-        help="Generate CSV for annotation or convert annotated CSV back to JSONL",
+        choices=["csv", "jsonl", "judge", "repair"],
+        help="Generate CSV, convert CSV->JSONL, judge, or repair grammaticality for a CSV",
     )
     gen.add_argument(
         "--completed-only",
@@ -186,7 +264,7 @@ def parse_args() -> argparse.Namespace:
     gen.add_argument(
         "--removal-concurrency",
         type=int,
-        default=16,
+        default=64,
         help="Max concurrent API removal requests when --removal-backend=api",
     )
     gen.add_argument(

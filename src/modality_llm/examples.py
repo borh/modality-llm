@@ -5,12 +5,15 @@ Functions for loading, generating, and managing examples.
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 from pathlib import Path
-from typing import List
+from typing import List, Literal, Optional
 
 import requests
+from pydantic import BaseModel
+from tqdm import tqdm
 
 from modality_llm.schema import Example, GrammarLabel
 from modality_llm.utils import load_jsonl_models, mark_changed_tokens
@@ -522,6 +525,345 @@ def load_xlsx_as_csv_rows(xlsx_path: str) -> list[dict]:
     return rows
 
 
+async def _judge_grammaticality_many(
+    rows: list[dict],
+    idxs: list[int],
+    model_name: str,
+    concurrency: int,
+) -> list[dict]:
+    class GrammarJudgment(BaseModel):
+        grammatical: Literal["yes", "no", "partial"]
+        explanation: Optional[str] = None
+
+    schema = GrammarJudgment.model_json_schema()
+    from openai import AsyncOpenAI
+
+    base = (
+        os.getenv("OPENAI_API_BASE")
+        or os.getenv("SGLANG_API_BASE")
+        or "http://localhost:30000/v1"
+    )
+    key = os.getenv("OPENAI_API_KEY") or "EMPTY"
+    client = AsyncOpenAI(api_key=key, base_url=base)
+    sem = asyncio.Semaphore(concurrency)
+
+    async def one(text: str) -> dict:
+        instr = (
+            "Judge ONLY the grammatical acceptability of the MARKED modal verb in the English utterance. "
+            "The modal is enclosed in asterisks, e.g., *must*. "
+            "Consider the marked modal's form, placement, agreement, and clause context. "
+            "Ignore typos, misspellings, and any errors outside the marked span. "
+            "Return strict JSON with fields: grammatical ('yes'|'no'|'partial') and optional explanation."
+        )
+
+        def _strip_code_fences(s: str) -> str:
+            s = s.strip()
+            s = re.sub(r"^\s*```(?:json)?\s*", "", s, flags=re.IGNORECASE)
+            s = re.sub(r"\s*```\s*$", "", s)
+            return s
+
+        def _parse_json(s: str) -> dict | None:
+            s1 = _strip_code_fences(s)
+            try:
+                return json.loads(s1)
+            except Exception:
+                m = re.search(r"\{.*\}", s, flags=re.DOTALL)
+                if m:
+                    try:
+                        return json.loads(m.group(0))
+                    except Exception:
+                        return None
+                return None
+
+        async with sem:
+            try:
+                resp = await client.responses.create(
+                    model=model_name,
+                    instructions=instr,
+                    input=text,
+                    text={
+                        "format": {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "GrammarJudgment",
+                                "schema": schema,
+                            },
+                        },
+                    },
+                    temperature=0.0,
+                )
+                out = (getattr(resp, "output_text", "") or "").strip()
+                data = _parse_json(out)
+                if data is None:
+                    logging.error(f"JSON parse failed: {out} for text: {text}")
+                if not (
+                    isinstance(data, dict)
+                    and data.get("grammatical") in ("yes", "no", "partial")
+                ):
+                    resp2 = await client.responses.create(
+                        model=model_name,
+                        instructions=instr,
+                        input=text,
+                        text={
+                            "format": {
+                                "type": "json_schema",
+                                "json_schema": {
+                                    "name": "GrammarJudgment",
+                                    "schema": schema,
+                                },
+                            },
+                        },
+                        temperature=0.1,
+                    )
+                    out2 = (getattr(resp2, "output_text", "") or "").strip()
+                    data = _parse_json(out2)
+                    if data is None:
+                        logging.error(
+                            f"JSON parse failed (retry): {out2} for text: {text}"
+                        )
+                if isinstance(data, dict) and data.get("grammatical") in (
+                    "yes",
+                    "no",
+                    "partial",
+                ):
+                    return data
+                lower = (out or "").lower()
+                for opt in ("yes", "no", "partial"):
+                    if opt in lower:
+                        return {"grammatical": opt, "explanation": out}
+                return {"grammatical": "yes", "explanation": ""}
+            except Exception as e:
+                logging.error(f"Judging request failed: {e} for text {text}")
+                return {"grammatical": "yes", "explanation": f"fallback: {e}"}
+
+    def _ensure_marked(row: dict) -> str:
+        s = row.get("Marked_Sentence_English", "") or ""
+        if "*" in s:
+            return s
+        orig = row.get("Original_Sentence", "") or ""
+        mv = row.get("Tested_Modal", "") or ""
+        if orig and mv:
+            pat = r"\b" + re.escape(mv) + r"\b"
+            marked = re.sub(
+                pat,
+                lambda m: f"*{m.group(0)}*",
+                orig,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            return marked
+        return s or orig
+
+    texts = [_ensure_marked(rows[i]) for i in idxs]
+
+    async def _one_with_index(i: int, text: str) -> tuple[int, dict]:
+        return i, await one(text)
+
+    tasks = [asyncio.create_task(_one_with_index(i, t)) for i, t in enumerate(texts)]
+    results: list[dict] = [None] * len(texts)
+    bar = tqdm(total=len(tasks), desc="Judging grammaticality", unit="row")
+    for fut in asyncio.as_completed(tasks):
+        i, res = await fut
+        results[i] = res
+        bar.update(1)
+    bar.close()
+    return results
+
+
+async def _repair_grammaticality_many(
+    rows: list[dict],
+    idxs: list[int],
+    model_name: str,
+    concurrency: int,
+) -> list[str]:
+    from openai import AsyncOpenAI
+
+    base = (
+        os.getenv("OPENAI_API_BASE")
+        or os.getenv("SGLANG_API_BASE")
+        or "http://localhost:30000/v1"
+    )
+    key = os.getenv("OPENAI_API_KEY") or "EMPTY"
+    client = AsyncOpenAI(api_key=key, base_url=base)
+    sem = asyncio.Semaphore(concurrency)
+
+    def _ensure_marked(row: dict) -> str:
+        s = row.get("Marked_Sentence_English", "") or ""
+        if "*" in s:
+            return s
+        orig = row.get("Original_Sentence", "") or ""
+        mv = row.get("Tested_Modal", "") or ""
+        if orig and mv:
+            pat = r"\b" + re.escape(mv) + r"\b"
+            return re.sub(
+                pat, lambda m: f"*{m.group(0)}*", orig, count=1, flags=re.IGNORECASE
+            )
+        return s or orig
+
+    def _build_repair_instructions(row: dict) -> str:
+        strat = (row.get("Transformation_Strategy") or "original").lower()
+        tested = row.get("Tested_Modal", "") or ""
+        src = row.get("Source_Modal", "") or ""
+        if strat == "remove_modality":
+            return (
+                "Rewrite the utterance by removing the marked modal while preserving grammar, polarity, meaning, and clause boundaries. "
+                "Do not add modal adverbs; fix negation scope; preserve lead adverbials and expletives. Return exactly one sentence."
+            )
+        return (
+            f"You will receive an English utterance with the tested modal marked between asterisks (e.g., *must*). "
+            f"Rewrite ONLY the substring inside the first pair of asterisks to use the tested modal '{tested}' (not '{src}') in a grammatical way. "
+            "You MAY adjust up to 5 tokens immediately to the right of the stars to fix tense/aspect (e.g., add 'have/been/going to'), "
+            "but copy all other text EXACTLY as-is: do not insert, delete, or reorder outside the marked span and the small right-side window. "
+            "Keep exactly one pair of asterisks in the output around the rewritten modal phrase. Return exactly one sentence."
+        )
+
+    def _split_star(s: str) -> tuple[str, str, str] | None:
+        parts = s.split("*")
+        if len(parts) < 3:
+            return None
+        return parts[0], parts[1], "*".join(parts[2:])
+
+    _TOK_RE = re.compile(r"\w+|[^\w\s]")
+
+    def _tokens(s: str) -> list[str]:
+        return [m.group(0) for m in _TOK_RE.finditer(s)]
+
+    def _outside_change_ok(
+        orig_marked: str,
+        cand_marked: str,
+        k_left: int = 2,
+        k_right: int = 5,
+        max_del_ratio: float = 0.25,
+        max_edit_ratio: float = 0.35,
+    ) -> bool:
+        o = _split_star(orig_marked)
+        c = _split_star(cand_marked)
+        if not o or not c:
+            return False
+        o_pre, _, o_suf = o
+        c_pre, _, c_suf = c
+        o_pre_t = _tokens(o_pre)
+        c_pre_t = _tokens(c_pre)
+        o_suf_t = _tokens(o_suf)
+        c_suf_t = _tokens(c_suf)
+        # Trim safety windows: allow changes in last k_left tokens of prefix and first k_right tokens of suffix
+        o_pre_trim = o_pre_t[:-k_left] if len(o_pre_t) > k_left else []
+        c_pre_trim = c_pre_t[:-k_left] if len(c_pre_t) > k_left else []
+        o_suf_trim = o_suf_t[k_right:] if len(o_suf_t) > k_right else []
+        c_suf_trim = c_suf_t[k_right:] if len(c_suf_t) > k_right else []
+        # Combine trimmed outsides
+        o_trim = o_pre_trim + o_suf_trim
+        c_trim = c_pre_trim + c_suf_trim
+        # Diff stats
+        import difflib
+
+        sm = difflib.SequenceMatcher(a=o_trim, b=c_trim)
+        deletions = insertions = replacements = 0
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag == "delete":
+                deletions += i2 - i1
+            elif tag == "insert":
+                insertions += j2 - j1
+            elif tag == "replace":
+                replacements += max(i2 - i1, j2 - j1)
+        base = max(1, len(o_trim))
+        del_ratio = deletions / base
+        edit_ratio = (insertions + replacements) / base
+        # Also bound overall length change ratio
+        len_ratio = abs(len(c_trim) - len(o_trim)) / base
+        return (
+            (del_ratio <= max_del_ratio)
+            and (edit_ratio <= max_edit_ratio)
+            and (len_ratio <= max_edit_ratio)
+        )
+
+    async def _one(row: dict) -> str:
+        strat = (row.get("Transformation_Strategy") or "original").lower()
+        if strat == "remove_modality":
+            from modality_llm.augmentation import remove_modality_transform_api_async
+
+            async with sem:
+                return await remove_modality_transform_api_async(
+                    row.get("Original_Sentence", "") or "",
+                    row.get("Source_Modal", "") or "",
+                    None,
+                    model_name=model_name,
+                    base_url=base,
+                )
+        marked = _ensure_marked(row)
+        instr = _build_repair_instructions(row)
+        async with sem:
+            try:
+                resp = await client.responses.create(
+                    model=model_name,
+                    instructions=instr,
+                    input=marked,
+                    temperature=0.0,
+                )
+                out = (
+                    (getattr(resp, "output_text", "") or "")
+                    .strip()
+                    .strip('"')
+                    .strip("'")
+                )
+                valid = bool(out)
+                if valid:
+                    valid = _outside_change_ok(marked, out)
+                if not valid or out == marked:
+                    instr2 = (
+                        instr
+                        + " Your previous answer changed text outside the allowed window. Only change inside the stars and up to 5 tokens immediately to the right; keep all other text exactly unchanged."
+                    )
+                    resp2 = await client.responses.create(
+                        model=model_name,
+                        instructions=instr2,
+                        input=marked,
+                        temperature=0.1,
+                    )
+                    out2 = (
+                        (getattr(resp2, "output_text", "") or "")
+                        .strip()
+                        .strip('"')
+                        .strip("'")
+                    )
+                    if out2 and _outside_change_ok(marked, out2):
+                        out = out2
+                        valid = True
+                if not valid:
+                    return ""  # reject repair; caller keeps original text
+                # ensure modal marking exists
+                if "*" not in out:
+                    tested = row.get("Tested_Modal", "") or ""
+                    if tested:
+                        pat = r"\b" + re.escape(tested) + r"\b"
+                        out = re.sub(
+                            pat,
+                            lambda m: f"*{m.group(0)}*",
+                            out,
+                            count=1,
+                            flags=re.IGNORECASE,
+                        )
+                return out
+            except Exception as e:
+                logging.error(f"Repair request failed: {e}")
+                return ""
+
+    texts = [rows[i] for i in idxs]
+
+    async def _one_with_index(i: int, row: dict) -> tuple[int, str]:
+        return i, await _one(row)
+
+    tasks = [asyncio.create_task(_one_with_index(i, r)) for i, r in enumerate(texts)]
+    results: list[str] = [""] * len(tasks)
+    bar = tqdm(total=len(tasks), desc="Repairing grammaticality", unit="row")
+    for fut in asyncio.as_completed(tasks):
+        i, res = await fut
+        results[i] = res
+        bar.update(1)
+    bar.close()
+    return results
+
+
 def generate_grammar_examples_for_annotation(
     modal_data_path: str,
     output_csv_path: str,
@@ -534,6 +876,11 @@ def generate_grammar_examples_for_annotation(
     removal_backend: str = "spacy",
     removal_model: str = "openai/gpt-oss-20b",
     removal_concurrency: int = 8,
+    judge_grammaticality: bool = False,
+    judge_model: str = "openai/gpt-oss-20b",
+    judge_concurrency: int = 8,
+    judge_overwrite: bool = False,
+    judge_only_augmented: bool = True,
 ) -> list[Example]:
     modal_path = Path(modal_data_path)
     output_path = Path(output_csv_path)
@@ -852,6 +1199,32 @@ def generate_grammar_examples_for_annotation(
                 }
             )
 
+    if judge_grammaticality:
+        to_judge = []
+        for i, row in enumerate(csv_rows):
+            if row.get("Transformation_Strategy") == "remove_modality":
+                # removal rows are assumed grammatical and may not contain marked insertions
+                row["Grammaticality_Expected"] = "yes"
+                continue
+            if not judge_overwrite and str(row.get("Completed", "0")) == "1":
+                continue
+            if (
+                judge_only_augmented
+                and row.get("Transformation_Strategy") == "original"
+            ):
+                continue
+            to_judge.append(i)
+        if to_judge:
+            results = asyncio.run(
+                _judge_grammaticality_many(
+                    csv_rows, to_judge, judge_model, judge_concurrency
+                )
+            )
+            for idx, res in zip(to_judge, results):
+                csv_rows[idx]["Grammaticality_Expected"] = res.get("grammatical", "yes")
+                if res.get("explanation"):
+                    csv_rows[idx]["Grammaticality_Explanation"] = res["explanation"]
+
     try:
         if output_format.lower() == "xlsx":
             generate_grammar_examples_xlsx(csv_rows, output_csv_path)
@@ -998,6 +1371,111 @@ def generate_grammar_examples_for_annotation(
     except Exception as e:
         print(f"Error writing {output_format.upper()} file: {e}")
         return []
+
+
+def judge_grammaticality_in_csv(
+    csv_path: str,
+    output_csv_path: str,
+    model_name: str = "openai/gpt-oss-20b",
+    concurrency: int = 8,
+    overwrite: bool = False,
+    only_augmented: bool = True,
+) -> None:
+    import polars as pl
+
+    from modality_llm.utils import load_csv
+
+    rows = load_csv(csv_path)
+    if not rows:
+        print(f"Error: No rows loaded from {csv_path}")
+        return
+
+    # Always assume removal rows are grammatical and skip judging them
+    for r in rows:
+        if r.get("Transformation_Strategy") == "remove_modality":
+            r["Grammaticality_Expected"] = "yes"
+
+    idxs = []
+    for i, r in enumerate(rows):
+        if r.get("Transformation_Strategy") == "remove_modality":
+            continue
+        if not overwrite and str(r.get("Completed", "0")) == "1":
+            continue
+        if only_augmented and r.get("Transformation_Strategy") == "original":
+            continue
+        idxs.append(i)
+
+    if not idxs:
+        print("Nothing to judge (no eligible rows).")
+        pl.DataFrame(rows).write_csv(output_csv_path)
+        print(f"Wrote CSV to {output_csv_path}")
+        return
+
+    results = asyncio.run(
+        _judge_grammaticality_many(rows, idxs, model_name, concurrency)
+    )
+    for i, res in zip(idxs, results):
+        rows[i]["Grammaticality_Expected"] = res.get("grammatical", "yes")
+        if res.get("explanation"):
+            rows[i]["Grammaticality_Explanation"] = res["explanation"]
+
+    pl.DataFrame(rows).write_csv(output_csv_path)
+    print(f"Judged {len(idxs)} rows; wrote CSV to {output_csv_path}")
+
+
+def repair_grammaticality_in_csv(
+    csv_path: str,
+    output_csv_path: str,
+    model_name: str = "openai/gpt-oss-20b",
+    concurrency: int = 8,
+    only_augmented: bool = True,
+    only_bad: bool = True,
+    rejudge: bool = True,
+) -> None:
+    import polars as pl
+
+    from modality_llm.utils import load_csv
+
+    rows = load_csv(csv_path)
+    if not rows:
+        print(f"Error: No rows loaded from {csv_path}")
+        return
+    idxs: list[int] = []
+    for i, r in enumerate(rows):
+        strat = (r.get("Transformation_Strategy") or "").lower()
+        if only_augmented and strat == "original":
+            continue
+        if strat == "remove_modality":
+            r["Grammaticality_Expected"] = "yes"
+            continue
+        if only_bad and r.get("Grammaticality_Expected", "yes") not in (
+            "no",
+            "partial",
+        ):
+            continue
+        idxs.append(i)
+    if not idxs:
+        print("Nothing to repair (no eligible rows).")
+        pl.DataFrame(rows).write_csv(output_csv_path)
+        print(f"Wrote CSV to {output_csv_path}")
+        return
+    repaired = asyncio.run(
+        _repair_grammaticality_many(rows, idxs, model_name, concurrency)
+    )
+    for i, new_text in zip(idxs, repaired):
+        if new_text:
+            rows[i]["Marked_Sentence_English"] = new_text
+            rows[i]["Repair_Status"] = "api"
+    if rejudge:
+        judged = asyncio.run(
+            _judge_grammaticality_many(rows, idxs, model_name, concurrency)
+        )
+        for i, res in zip(idxs, judged):
+            rows[i]["Grammaticality_Expected"] = res.get("grammatical", "yes")
+            if res.get("explanation"):
+                rows[i]["Grammaticality_Explanation"] = res["explanation"]
+    pl.DataFrame(rows).write_csv(output_csv_path)
+    print(f"Repaired {len(idxs)} rows; wrote CSV to {output_csv_path}")
 
 
 def convert_annotated_csv_to_jsonl(
