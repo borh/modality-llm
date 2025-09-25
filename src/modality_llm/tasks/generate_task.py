@@ -14,6 +14,12 @@ def generate_grammar_examples_for_annotation(
     include_alternatives: bool,
     require_consensus: str | None = None,
     output_format: str = "csv",
+    existing_csv_path: str | None = None,
+    freeze_completed: bool = True,
+    mark_diff: bool = True,
+    removal_backend: str = "spacy",
+    removal_model: str = "openai/gpt-oss-20b",
+    removal_concurrency: int = 8,
 ) -> list[Any]:
     return examples_mod.generate_grammar_examples_for_annotation(
         modal_data_path=modal_data_path,
@@ -21,6 +27,12 @@ def generate_grammar_examples_for_annotation(
         include_alternatives=include_alternatives,
         require_consensus=require_consensus,
         output_format=output_format,
+        existing_csv_path=existing_csv_path,
+        freeze_completed=freeze_completed,
+        mark_diff=mark_diff,
+        removal_backend=removal_backend,
+        removal_model=removal_model,
+        removal_concurrency=removal_concurrency,
     )
 
 
@@ -78,6 +90,12 @@ def run(
                 include_alternatives=getattr(args, "gen_include_alternatives", False),
                 require_consensus=getattr(args, "require_consensus", None),
                 output_format=getattr(args, "format", "csv"),
+                existing_csv_path=getattr(args, "existing_csv", None),
+                freeze_completed=getattr(args, "freeze_completed", True),
+                mark_diff=getattr(args, "mark_diff", True),
+                removal_backend=getattr(args, "removal_backend", "spacy"),
+                removal_model=getattr(args, "removal_model", "openai/gpt-oss-20b"),
+                removal_concurrency=getattr(args, "removal_concurrency", 8),
             )
         else:
             print("Warning: Could not load modal dataset. Cannot generate CSV.")
@@ -90,6 +108,7 @@ def run(
             csv_path=getattr(args, "data_path"),
             output_jsonl_path=getattr(args, "output"),
             completed_only=getattr(args, "completed_only", False),
+            jsonl_format=getattr(args, "jsonl_format", "minimal"),
         )
     else:
         raise ValueError(f"Unknown submode: {submode}")

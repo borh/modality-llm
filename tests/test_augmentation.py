@@ -423,6 +423,7 @@ class TestModalTransformations:
             "possibility_paraphrase",
             "prediction_paraphrase",
             "conditional_paraphrase",
+            "remove_modality",
             # entailment / weakening/strengthening
             "necessity_to_advice",
             "necessity_to_permission",

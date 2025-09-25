@@ -134,6 +134,49 @@ Files are written to the current working directory unless you change code or mov
 - Cache:
   - LLM outputs are cached in cache/ as files named <sanitized_model_name>_<md5hash>.json.
 
+## Dataset evolution workflow (merge/diff and curated JSONL)
+
+1) Generate an augmented CSV and include alternatives:
+   uv run --extra cuda modality-llm generate csv modal_verbs.jsonl consensus_quirk_palmer_v1.csv --require-consensus both --gen-include-alternatives --format csv
+
+2) After annotating (Palmer_Expected/Quirk_Expected, Completed=1), regenerate with a new code version and merge against the prior CSV to carry labels and flag text changes:
+   uv run --extra cuda modality-llm generate csv modal_verbs.jsonl consensus_quirk_palmer_v2.csv --require-consensus both --gen-include-alternatives --format csv --existing-csv consensus_quirk_palmer_v1.csv
+
+   Flags:
+   - --existing-csv: carry forward Completed and expected labels by (EID|Tested_Modal|Transformation_Strategy)
+   - --no-freeze-completed: if set, adopt new text even for Completed=1 rows (default keeps old text)
+   - --no-mark-diff: if set, do not add a Marked_Diff column
+
+3) Convert to curated JSONL for compute tasks. Choose minimal (pipeline-compatible) or extended (preserve CSV metadata):
+   uv run modality-llm generate jsonl consensus_quirk_palmer_v2.csv curated_modal_verbs.jsonl --completed-only --jsonl-format minimal
+
+   The minimal JSONL has fields: mv, utt, annotations, res (matches ModalExample).
+   The extended JSONL adds: transformation_strategy, source_eid, completed, grammatical, grammatical_binary.
+
+4) Use curated JSONL everywhere:
+   uv run modality-llm modal --data-path curated_modal_verbs.jsonl --taxonomy both
+   uv run modality-llm grammar --grammar-source modal --data-path curated_modal_verbs.jsonl
+
+## API-backed modality removal (optional)
+
+You can generate the "(removed)" alternative using an API model via an OpenAI-compatible endpoint.
+
+Environment:
+- `OPENAI_API_BASE`: base URL (e.g., http://localhost:30000/v1). Required for API backend.
+- `OPENAI_API_KEY`: API key; defaults to "EMPTY" if not set.
+
+CLI:
+- --removal-backend spacy|api (default spacy)
+- --removal-model openai/gpt-oss-20b (default)
+
+Example:
+
+```bash
+uv run --extra cuda modality-llm generate csv modal_verbs.jsonl out.csv --gen-include-alternatives --format csv --removal-backend api --removal-model openai/gpt-oss-20b
+```
+
+The prompt used for the API distills the spaCy rules and test cases and is in general better than the spaCy backend.
+
 ## Behaviour and caveats
 
 - Quantization: bitsandbytes support is optional. If bitsandbytes is missing, the code falls back to bf16.

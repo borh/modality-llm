@@ -1,5 +1,7 @@
 import csv
+import difflib
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Literal, TypeVar
 
@@ -175,3 +177,86 @@ def write_jsonl_models(path: Path | str, models: list[BaseModel]) -> None:
     Write a list of BaseModel instances to a JSONL file.
     """
     write_jsonl(path, models)
+
+
+def mark_changed_tokens(
+    original: str,
+    transformed: str,
+    focus_span: tuple[int, int] | None = None,
+) -> str:
+    """
+    Mark only inserted or replaced token spans in `transformed` relative to `original`.
+    If the diff shows only deletions (e.g., pure removal), return `transformed` unchanged.
+
+    Tokenization uses a simple regex: words and standalone punctuation.
+
+    Args:
+        original: original sentence (pre-transformation)
+        transformed: transformed sentence
+        focus_span: optional (start, end) character-span in `original` to anchor
+            the diff (e.g., the modal span). When provided, only consider diffs
+            that overlap tokens within this span.
+
+    Returns:
+        A string where a single contiguous changed span is wrapped in *...*,
+        or the unmarked `transformed` when only deletions occurred.
+
+    Examples:
+        >>> mark_changed_tokens("I will win.", "I am going to win.", (2, 6))
+        'I *am going to* win.'
+        >>> mark_changed_tokens("It may rain.", "It rain.", (3, 6))
+        'It rain.'
+    """
+    # 1) tokenize into words and punctuation, with spans preserved
+    tok_re = re.compile(r"\w+|[^\w\s]")
+    orig_matches = list(tok_re.finditer(original))
+    rem_matches = list(tok_re.finditer(transformed))
+    orig_tokens = [m.group(0) for m in orig_matches]
+    rem_tokens = [m.group(0) for m in rem_matches]
+
+    # 2) if focus_span is given, find token-index range that overlaps it
+    modal_i1 = 0
+    modal_i2 = len(orig_tokens)
+    if focus_span is not None:
+        start, end = focus_span
+        idxs = [
+            i for i, m in enumerate(orig_matches) if m.start() < end and m.end() > start
+        ]
+        if idxs:
+            modal_i1 = idxs[0]
+            modal_i2 = idxs[-1] + 1
+
+    # 3) diff tokens and pick the first inserted/replaced range overlapping the focus
+    sm = difflib.SequenceMatcher(a=orig_tokens, b=rem_tokens)
+    changed_j: tuple[int, int] | None = None
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        # skip non-overlapping ranges if focus_span was provided
+        if focus_span is not None and (i2 <= modal_i1 or i1 >= modal_i2):
+            continue
+        if tag in ("replace", "insert") and j2 > j1:
+            changed_j = (j1, j2)
+            break
+        # deletions should not produce marking; skip
+
+    if changed_j is None:
+        # only deletions or no detectable change → no marking
+        out = transformed
+    else:
+        j1, j2 = changed_j
+        # map token indices back to character spans in transformed
+        rem_start = rem_matches[j1].start()
+        rem_end = rem_matches[j2 - 1].end()
+        # wrap that span in asterisks
+        out = (
+            transformed[:rem_start]
+            + "*"
+            + transformed[rem_start:rem_end]
+            + "*"
+            + transformed[rem_end:]
+        )
+
+    # 4) normalize spacing around punctuation
+    out = re.sub(r"\s+([?.!,;:])", r"\1", out)
+    # squish multiple spaces
+    out = re.sub(r"\s+", " ", out).strip()
+    return out

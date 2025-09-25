@@ -119,6 +119,26 @@ def parse_args() -> argparse.Namespace:
         help="Also emit alternative substitution rows (csv mode only)",
     )
     gen.add_argument(
+        "--existing-csv",
+        type=str,
+        default=None,
+        help="Carry forward labels and completion flags from an earlier CSV; produce diffs",
+    )
+    gen.add_argument(
+        "--no-freeze-completed",
+        dest="freeze_completed",
+        action="store_false",
+        default=True,
+        help="Do not preserve text for rows marked Completed=1 when text changes",
+    )
+    gen.add_argument(
+        "--no-mark-diff",
+        dest="mark_diff",
+        action="store_false",
+        default=True,
+        help="Do not add a Marked_Diff column to highlight text changes",
+    )
+    gen.add_argument(
         "--require-consensus",
         choices=["palmer", "quirk", "both"],
         default=None,
@@ -144,6 +164,30 @@ def parse_args() -> argparse.Namespace:
         choices=["csv", "xlsx"],
         default="csv",
         help="Output format: CSV or XLSX with validation (csv mode only)",
+    )
+    gen.add_argument(
+        "--jsonl-format",
+        choices=["minimal", "extended"],
+        default="minimal",
+        help="JSONL schema when converting: minimal (compat with pipeline) or extended (preserve CSV metadata)",
+    )
+    gen.add_argument(
+        "--removal-backend",
+        choices=["spacy", "api"],
+        default="spacy",
+        help="Backend for remove-modality alternative row: 'spacy' (default) or 'api'",
+    )
+    gen.add_argument(
+        "--removal-model",
+        type=str,
+        default="openai/gpt-oss-20b",
+        help="Model name for API-backed removal (base URL from OPENAI_API_BASE env)",
+    )
+    gen.add_argument(
+        "--removal-concurrency",
+        type=int,
+        default=16,
+        help="Max concurrent API removal requests when --removal-backend=api",
     )
     gen.add_argument(
         "output", help="Output: CSV file (csv mode) or JSONL file (jsonl mode)"
